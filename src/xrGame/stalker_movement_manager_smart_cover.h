@@ -40,7 +40,6 @@ class stalker_movement_manager_smart_cover : public stalker_movement_manager_obs
 private:
 	typedef stalker_movement_manager_obstacles inherited;
 	typedef smart_cover::animation_selector animation_selector_type;
-	typedef smart_cover::animation_planner animation_planner_type;
 	typedef smart_cover::cover cover_type;
 	typedef smart_cover::loophole loophole_type;
 	typedef smart_cover::transitions::action transition_action;
@@ -202,6 +201,15 @@ private:
 	bool m_default_behaviour;
 	bool m_check_can_kill_enemy;
 	bool m_combat_behaviour;
+	// New members for smart covers.
+	bool m_alignment_in_progress;
+	bool m_alignment_timeout_forced;
+	u32 m_alignment_start_time;
+	u32 m_position_reached_time;
+	u32 m_cover_entry_time;
+	// One is used for alignment tolerance check, the other for combat target update delay to ensure transitions do not skip on smart cover entry.
+	static constexpr float ENTER_ALIGNMENT_TOLERANCE = 0.98f;
+	static constexpr u32 COMBAT_TARGET_DELAY = 200;
 }; // class stalker_movement_manager_smart_cover
 
 #include "stalker_movement_manager_smart_cover_inline.h"

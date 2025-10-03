@@ -76,6 +76,8 @@ void animation_planner::update()
 	inherited::update();
 }
 
+// MFB: Fix transition skips on smart cover entry.
+// - 3.10.2025 -
 void animation_planner::initialize()
 {
 	typedef CAI_Stalker::HitCallback HitCallback;
@@ -85,18 +87,22 @@ void animation_planner::initialize()
 	object().hit_callback(hit_callback);
 
 	m_head_speed = object().movement().m_head.speed;
-	//	object().movement().m_head.speed	= PI_DIV_4;
 
 	m_storage.set_property(eWorldPropertyLookedOut, false);
+	m_storage.set_property(eWorldPropertyLoopholeIdle, false);
+	m_storage.set_property(eWorldPropertyLoopholeFire, false);
+	m_storage.set_property(eWorldPropertyLoopholeFireNoLookout, false);
+
 	m_storage.set_property(eWorldPropertyReadyToIdle, true);
 	m_storage.set_property(eWorldPropertyReadyToLookout, false);
 	m_storage.set_property(eWorldPropertyReadyToFire, false);
 	m_storage.set_property(eWorldPropertyReadyToFireNoLookout, false);
 
-	if (!target_state().conditions().empty())
-		return;
-
+	m_target.clear();
 	target(eWorldPropertyLookedOut);
+
+	Msg("[SmartCover] Planner initialized for %s: target=lookout, ready_to_idle=true",
+		object().cName().c_str());
 }
 
 void animation_planner::finalize()

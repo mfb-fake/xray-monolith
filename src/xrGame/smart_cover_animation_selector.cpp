@@ -86,27 +86,33 @@ MotionID animation_selector::select_animation(bool& animation_movement_controlle
 			m_callback_called = false;
 
 			m_previous_time = 0.f;
+			
 			if (!m_planner->initialized())
 			{
-				//				Msg				("%6d no planner update, planner is not initialized, exiting", Device.dwTimeGlobal);
 				return (m_object->animation().assign_global_animation(animation_movement_controller));
 			}
 		}
 
-		//		Msg					("%6d updating planner", Device.dwTimeGlobal);
 		m_planner->update();
 
 		if (!m_planner->initialized())
 		{
-			//			Msg				("%6d planner is not initialized after update, exiting", Device.dwTimeGlobal);
 			return (m_object->animation().assign_global_animation(animation_movement_controller));
 		}
 
-		current_operator()->on_no_mark();
-		if (!current_operator()->is_animated_action())
-			return (m_object->animation().assign_global_animation(animation_movement_controller));
+		if (m_planner->initialized())
+		{
+			current_operator()->on_no_mark();
+			
+			if (!current_operator()->is_animated_action())
+				return (m_object->animation().assign_global_animation(animation_movement_controller));
 
-		current_operator()->select_animation(m_animation);
+			current_operator()->select_animation(m_animation);
+		}
+		else
+		{
+			return (m_object->animation().assign_global_animation(animation_movement_controller));
+		}
 
 		VERIFY(m_object->movement().current_params().cover());
 		if (!m_object->movement().current_params().cover()->can_fire())
@@ -139,14 +145,20 @@ MotionID animation_selector::select_animation(bool& animation_movement_controlle
 #endif // #ifndef MASTER_GOLD
 	}
 
-	VERIFY(m_animation._get());
-	//	VERIFY				(m_first_time || m_object->animation().global().blend());
+	if (!m_planner->initialized() || !m_animation._get())
+	{
+		return (m_object->animation().assign_global_animation(animation_movement_controller));
+	}
+
 	MotionID result = m_skeleton_animated->ID_Cycle(m_animation.c_str());
 	if (m_first_time)
 	{
 		m_first_time = false;
 		m_previous_time = 0.f;
-		current_operator()->on_no_mark();
+		
+		if (m_planner->initialized())
+			current_operator()->on_no_mark();
+			
 		return (result);
 	}
 
@@ -154,7 +166,10 @@ MotionID animation_selector::select_animation(bool& animation_movement_controlle
 	if (!blend)
 	{
 		m_previous_time = 0.f;
-		current_operator()->on_no_mark();
+		
+		if (m_planner->initialized())
+			current_operator()->on_no_mark();
+			
 		return (result);
 	}
 
@@ -165,7 +180,9 @@ MotionID animation_selector::select_animation(bool& animation_movement_controlle
 	Marks const& marks = motion_def->marks;
 	if (marks.size() < 3)
 	{
-		current_operator()->on_no_mark();
+		if (m_planner->initialized())
+			current_operator()->on_no_mark();
+			
 		return (result);
 	}
 
@@ -178,12 +195,16 @@ MotionID animation_selector::select_animation(bool& animation_movement_controlle
 	// first 2 should be footsteps
 	if (!marks[2].is_mark_between(previous_time, time_current))
 	{
-		current_operator()->on_no_mark();
+		if (m_planner->initialized())
+			current_operator()->on_no_mark();
+			
 		return (result);
 	}
 
 	//	Msg					( "%d on_mark", Device.dwTimeGlobal );
-	current_operator()->on_mark();
+	if (m_planner->initialized())
+		current_operator()->on_mark();
+		
 	return (result);
 }
 
