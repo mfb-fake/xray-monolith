@@ -566,7 +566,8 @@ void CStalkerCombatPlanner::add_actions()
 	add_condition(action, eWorldPropertyItemCanKill, true);
 	add_condition(action, eWorldPropertyEnemyWounded, false);
 	add_condition(action, eWorldPropertyInSmartCover, true);
-	add_effect(action, eWorldPropertyInSmartCover, false);
+	// add_effect(action, eWorldPropertyInSmartCover, false);
+	add_effect(action, eWorldPropertyPureEnemy, false);
 	add_operator(eWorldOperatorInSmartCover, action);
 }
 

@@ -205,7 +205,7 @@ void stalker_movement_manager_smart_cover::modify_animation(CBlend* blend)
 bool show_restrictions(CRestrictedObject* object);
 
 // MFB: Fixed alignment logic cancelling out too early along with other bugs.
-// - 3.10.2025 -
+// - 13.10.2025 -
 void stalker_movement_manager_smart_cover::reach_enter_location(u32 const& time_delta)
 {
 	m_current.m_path_type = MovementManager::ePathTypeLevelPath;
@@ -242,7 +242,7 @@ void stalker_movement_manager_smart_cover::reach_enter_location(u32 const& time_
 
 	float actual_distance = object().Position().distance_to(position);
 
-	if (actual_distance > 0.25f) {
+	if (actual_distance > 0.15f) {
 		m_alignment_in_progress = false;
 		m_alignment_start_time = 0;
 		m_alignment_timeout_forced = false;
@@ -255,24 +255,62 @@ void stalker_movement_manager_smart_cover::reach_enter_location(u32 const& time_
 		return;
 	}
 
-	Fvector current_dir = object().Direction();
-	current_dir.y = 0.f;
-	current_dir.normalize_safe();
+	// I have to find a better solution for aligning NPCs reliably.
+	Fvector head_dir_current, head_dir_target;
+
+	head_dir_current.setHP(-object().movement().m_head.current.yaw, -object().movement().m_head.current.pitch);
+	head_dir_current.y = 0.f;
+	head_dir_current.normalize_safe();
+
+	head_dir_target.setHP(-object().movement().m_head.target.yaw, -object().movement().m_head.target.pitch);
+	head_dir_target.y = 0.f;
+	head_dir_target.normalize_safe();
+
+	float alignment_progress = 0.0f;
+	if (m_alignment_in_progress && m_alignment_start_time > 0) {
+		u32 elapsed = Device.dwTimeGlobal - m_alignment_start_time;
+		alignment_progress = _min(elapsed / 3000.0f, 1.0f);
+	}
+
+	// blend: early = 80% current, late = 80% target
+	float current_weight = 0.8f - (alignment_progress * 0.6f);
+	float target_weight = 1.0f - current_weight;
+
+	Fvector head_dir;
+	head_dir.x = head_dir_current.x * current_weight + head_dir_target.x * target_weight;
+	head_dir.y = 0.f;
+	head_dir.z = head_dir_current.z * current_weight + head_dir_target.z * target_weight;
+	head_dir.normalize_safe();
 
 	Fvector desired_dir = direction;
 	desired_dir.y = 0.f;
 	desired_dir.normalize_safe();
 
-	float alignment_dot = desired_dir.dotproduct(current_dir);
+	float alignment_dot = desired_dir.dotproduct(head_dir);
+	float required_alignment = INITIAL_ALIGNMENT_TOLERANCE;
 
-	if (!m_alignment_timeout_forced && alignment_dot < ENTER_ALIGNMENT_TOLERANCE) {
+	if (!m_alignment_timeout_forced && alignment_dot < required_alignment) {
 		if (!m_alignment_in_progress) {
 			m_alignment_in_progress = true;
 			m_alignment_start_time = Device.dwTimeGlobal;
+
+			Msg("[SmartCover] %s: Starting alignment (current=%.3f, need=%.3f)",
+				object().cName().c_str(), alignment_dot, required_alignment);
 		}
 
-		if (Device.dwTimeGlobal - m_alignment_start_time > 3000) {
-			Msg("! [SmartCover] %s: Alignment timeout after 3 seconds, forcing entry", object().cName().c_str());
+		u32 elapsed_time = Device.dwTimeGlobal - m_alignment_start_time;
+
+		if (elapsed_time % 150 == 0) {
+			Msg("[SmartCover] %s: Aligning... %.1f%% (%.3f/%.3f)",
+				object().cName().c_str(),
+				alignment_progress * 100.0f,
+				alignment_dot,
+				required_alignment);
+		}
+
+		if (elapsed_time > 1800) {
+			Msg("[SmartCover] %s: Alignment timeout after 1.8 seconds (dot=%.3f, required=%.3f), forcing entry",
+				object().cName().c_str(), alignment_dot, required_alignment);
 
 			Fmatrix transform;
 			transform.setXYZ(0.f, direction.getH(), 0.f);
@@ -293,8 +331,11 @@ void stalker_movement_manager_smart_cover::reach_enter_location(u32 const& time_
 			return;
 		}
 	}
-
-	m_alignment_in_progress = false;
+	else if (m_alignment_in_progress) {
+		Msg("[SmartCover] %s: Successfully aligned (final_dot=%.3f)",
+			object().cName().c_str(), alignment_dot);
+		m_alignment_in_progress = false;
+	}
 
 	if (m_target.cover()->is_combat_cover()) {
 		const CInventoryItem* item = object().inventory().ActiveItem();

@@ -37,10 +37,10 @@ animation_planner::animation_planner(CAI_Stalker* object, LPCSTR action_name) :
 	m_default_lookout_interval(0),
 	m_loophole_value(1000),
 	m_head_speed(flt_max),
-	m_idle_min_time(0.f),
-	m_idle_max_time(0.f),
-	m_lookout_min_time(0.f),
-	m_lookout_max_time(0.f),
+	m_idle_min_time(1.1f),
+	m_idle_max_time(2.7f),
+	m_lookout_min_time(1.4f),
+	m_lookout_max_time(3.0f),
 	m_stay_idle(true),
 	m_last_idle_time(0),
 	m_last_lookout_time(0)
@@ -77,7 +77,7 @@ void animation_planner::update()
 }
 
 // MFB: Fix transition skips on smart cover entry.
-// - 3.10.2025 -
+// - 11.10.2025 -
 void animation_planner::initialize()
 {
 	typedef CAI_Stalker::HitCallback HitCallback;
@@ -98,11 +98,20 @@ void animation_planner::initialize()
 	m_storage.set_property(eWorldPropertyReadyToFire, false);
 	m_storage.set_property(eWorldPropertyReadyToFireNoLookout, false);
 
-	m_target.clear();
-	target(eWorldPropertyLookedOut);
+	m_stay_idle = true;
+	m_last_idle_time = Device.dwTimeGlobal;
+	m_last_lookout_time = 0;
 
-	Msg("[SmartCover] Planner initialized for %s: target=lookout, ready_to_idle=true",
-		object().cName().c_str());
+	m_last_transition_time = Device.dwTimeGlobal;
+
+	m_target.clear();
+
+	target(eWorldPropertyLoopholeIdle);
+
+	Msg("[SmartCover] Planner initialized for %s: idle_time=%.1f-%.1fs, lookout_time=%.1f-%.1fs",
+		object().cName().c_str(),
+		m_idle_min_time, m_idle_max_time,
+		m_lookout_min_time, m_lookout_max_time);
 }
 
 void animation_planner::finalize()

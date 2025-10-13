@@ -96,6 +96,7 @@ namespace StalkerDecisionSpace
 		eWorldPropertyLoopholeCanFireAtEnemy,
 		eWorldPropertyLoopholeTooMuchTimeFiring,
 		eWorldPropertyStayIdle,
+		eWorldPropertyLoopholeEnemyActual,
 
 		eWorldPropertyScript,
 		eWorldPropertyDummy = u32(-1),

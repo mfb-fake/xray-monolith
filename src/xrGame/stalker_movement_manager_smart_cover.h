@@ -208,8 +208,8 @@ private:
 	u32 m_position_reached_time;
 	u32 m_cover_entry_time;
 	// One is used for alignment tolerance check, the other for combat target update delay to ensure transitions do not skip on smart cover entry.
-	static constexpr float ENTER_ALIGNMENT_TOLERANCE = 0.98f;
-	static constexpr u32 COMBAT_TARGET_DELAY = 200;
+	static constexpr float INITIAL_ALIGNMENT_TOLERANCE = 0.98f;
+	static constexpr u32 COMBAT_TARGET_DELAY = 500;
 }; // class stalker_movement_manager_smart_cover
 
 #include "stalker_movement_manager_smart_cover_inline.h"

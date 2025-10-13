@@ -327,7 +327,7 @@ loophole_reload::loophole_reload(CAI_Stalker* object, LPCSTR action_name) :
 void loophole_reload::select_animation(shared_str& result)
 {
 	inherited::select_animation(result);
-	object().set_goal(eObjectActionAimForceFull1, object().best_weapon());
+	object().inventory().Action(kWPN_RELOAD, CMD_START);
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -395,6 +395,42 @@ void loophole_lookout::execute()
 	inherited::execute();
 
 	setup_sight(false);
+
+	CAI_Stalker& stalker = object();
+
+	typedef xr_vector<const CEntityAlive*> ENEMIES;
+	const ENEMIES& enemies = stalker.memory().enemy().objects();
+
+	bool enemy_spotted = false;
+	const CEntityAlive* detected_enemy = nullptr;
+
+	for (ENEMIES::const_iterator it = enemies.begin(); it != enemies.end(); ++it) {
+		const CEntityAlive* enemy = *it;
+		if (!enemy || !enemy->g_Alive())
+			continue;
+
+		if (!stalker.memory().visual().visible_now(enemy))
+			continue;
+
+		if (!stalker.movement().in_current_loophole_fov(enemy->Position()))
+			continue;
+
+		enemy_spotted = true;
+		detected_enemy = enemy;
+		break;
+	}
+
+	if (enemy_spotted) {
+		stalker.movement().animation_selector().planner().m_storage.set_property(
+			StalkerDecisionSpace::eWorldPropertyLookedOut, true);
+
+		if (detected_enemy) {
+			Msg("[SmartCover] %s IMMEDIATELY terminated lookout - spotted %s",
+				stalker.cName().c_str(),
+				detected_enemy->cName().c_str());
+		}
+		return;
+	}
 }
 
 void loophole_lookout::finalize()
@@ -419,6 +455,11 @@ void loophole_fire::initialize()
 
 	m_firing = true;
 
+	CWeapon* weapon = smart_cast<CWeapon*>(object().best_weapon());
+	if (weapon && weapon->GetAmmoElapsed() == 0) {
+		m_firing = false;
+	}
+
 	object().sight().bone_aiming(m_animation, CSightManager::animation_frame_start, CSightManager::aiming_weapon);
 }
 
@@ -427,14 +468,22 @@ void loophole_fire::execute()
 	inherited::execute();
 
 	LPCSTR animation_id = "idle";
+
+	CWeapon* weapon = smart_cast<CWeapon*>(object().best_weapon());
+	bool has_ammo = weapon && (weapon->GetAmmoElapsed() > 0);
+
+	bool is_reloading = weapon && (weapon->GetState() == CWeapon::eReload);
+
 	if (
+		has_ammo &&
+		!is_reloading &&
 		object().sight().current_action().target_reached() &&
 		m_firing &&
 		(
 			!object().movement().check_can_kill_enemy() ||
 			object().fire_make_sense()
+			)
 		)
-	)
 		animation_id = "shoot";
 	else
 		m_firing = false;
@@ -468,13 +517,21 @@ void loophole_fire::on_animation_end()
 
 void loophole_fire::on_mark()
 {
-	CWeapon* best_weapon = smart_cast<CWeapon *>(object().best_weapon());
+	CWeapon* best_weapon = smart_cast<CWeapon*>(object().best_weapon());
 	if (!best_weapon)
 		return;
 
+	if (best_weapon->GetAmmoElapsed() == 0) {
+		m_firing = false;
+		object().set_goal(eObjectActionIdle, object().best_weapon(), 1, 3);
+		return;
+	}
+
 	u32 const magazine_size = best_weapon->GetAmmoMagSize();
-	//	Msg							( "started firing: %d", magazine_size );
-	object().set_goal(eObjectActionFireNoReload, object().best_weapon(), magazine_size, magazine_size);
+	u32 const ammo_elapsed = best_weapon->GetAmmoElapsed();
+	u32 const bullets_to_fire = (ammo_elapsed < magazine_size) ? ammo_elapsed : magazine_size;
+
+	object().set_goal(eObjectActionFireNoReload, object().best_weapon(), bullets_to_fire, bullets_to_fire);
 }
 
 void loophole_fire::on_no_mark()

@@ -224,6 +224,20 @@ namespace smart_cover
 			                                       u32 const& time_interval);
 			virtual _value_type evaluate();
 		};
+
+		//////////////////////////////////////////////////////////////////////////
+		// class combat_enemy_evaluator
+		//////////////////////////////////////////////////////////////////////////
+
+		class combat_enemy_evaluator : public CPropertyEvaluator<animation_planner>
+		{
+		private:
+			typedef CPropertyEvaluator<animation_planner> inherited;
+
+		public:
+			combat_enemy_evaluator(animation_planner* object, LPCSTR evaluator_name);
+			virtual _value_type evaluate();
+		};
 	} // namespace evaluators
 } // namespace smart_covers
 

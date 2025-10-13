@@ -1584,8 +1584,6 @@ void CStalkerCombatActionSmartCover::execute()
 {
 	inherited::execute();
 
-	// just for debug purposes
-	// this can be only in case when solution cannot be built
 	if (!object().memory().enemy().selected())
 		return;
 
@@ -1594,6 +1592,76 @@ void CStalkerCombatActionSmartCover::execute()
 		return;
 
 	Fvector const position = mem_object.m_object_params.m_position;
+
+	if (object().movement().current_params().cover())
+	{
+		object().movement().target_params().cover_fire_position(&position);
+
+		CEntityAlive const* enemy = object().memory().enemy().selected();
+		if (!enemy)
+			return;
+
+		u32 const level_time = object().memory().visual().visible_object_time_last_seen(enemy);
+		u32 const time_since_seen = (level_time != u32(-1)) ? (Device.dwTimeGlobal - level_time) : u32(-1);
+
+		static const u32 s_extended_wait_time = 90 * 1000;
+
+		bool in_active_combat = false;
+
+		typedef xr_vector<const CEntityAlive*> ENEMIES;
+		const ENEMIES& enemies = object().memory().enemy().objects();
+
+		for (ENEMIES::const_iterator it = enemies.begin(); it != enemies.end(); ++it) {
+			const CEntityAlive* other_enemy = *it;
+			if (!other_enemy || !other_enemy->g_Alive())
+				continue;
+
+			u32 other_seen_time = object().memory().visual().visible_object_time_last_seen(other_enemy);
+			if (other_seen_time != u32(-1)) {
+				u32 time_since_other_seen = Device.dwTimeGlobal - other_seen_time;
+				if (time_since_other_seen < s_extended_wait_time) {
+					in_active_combat = true;
+					break;
+				}
+			}
+		}
+
+		if (!in_active_combat && !object().memory().hit().objects().empty()) {
+			typedef CHitMemoryManager::HITS HITS;
+			const HITS& hits = object().memory().hit().objects();
+
+			for (HITS::const_iterator it = hits.begin(); it != hits.end(); ++it) {
+				if (Device.dwTimeGlobal - it->m_level_time < 20000) {
+					in_active_combat = true;
+					break;
+				}
+			}
+		}
+
+		if (!in_active_combat) {
+			if (object().agent_manager().member().members().size() > 1) {
+				in_active_combat = true;
+			}
+		}
+
+		if (in_active_combat)
+			return;
+
+		if (time_since_seen != u32(-1) && time_since_seen < s_extended_wait_time)
+			return;
+
+		if (
+			object().agent_manager().member().can_detour() ||
+			!object().agent_manager().member().cover_detouring() ||
+			!fire_make_sense()
+			)
+			return;
+
+		m_storage->set_property(eWorldPropertyPositionHolded, true);
+		m_storage->set_property(eWorldPropertyInCover, false);
+		return;
+	}
+
 	CCoverPoint const* cover = object().best_cover(position);
 	if (!cover)
 	{
@@ -1609,14 +1677,59 @@ void CStalkerCombatActionSmartCover::execute()
 		return;
 
 	u32 const level_time = object().memory().visual().visible_object_time_last_seen(enemy);
-	if (level_time + s_wait_enemy_in_smart_cover_time >= Device.dwTimeGlobal)
+	u32 const time_since_seen = (level_time != u32(-1)) ? (Device.dwTimeGlobal - level_time) : u32(-1);
+
+	static const u32 s_extended_wait_time = 90 * 1000;
+
+	bool in_active_combat = false;
+
+	typedef xr_vector<const CEntityAlive*> ENEMIES;
+	const ENEMIES& enemies = object().memory().enemy().objects();
+
+	for (ENEMIES::const_iterator it = enemies.begin(); it != enemies.end(); ++it) {
+		const CEntityAlive* other_enemy = *it;
+		if (!other_enemy || !other_enemy->g_Alive())
+			continue;
+
+		u32 other_seen_time = object().memory().visual().visible_object_time_last_seen(other_enemy);
+		if (other_seen_time != u32(-1)) {
+			u32 time_since_other_seen = Device.dwTimeGlobal - other_seen_time;
+			if (time_since_other_seen < s_extended_wait_time) {
+				in_active_combat = true;
+				break;
+			}
+		}
+	}
+
+	if (!in_active_combat && !object().memory().hit().objects().empty()) {
+		typedef CHitMemoryManager::HITS HITS;
+		const HITS& hits = object().memory().hit().objects();
+
+		for (HITS::const_iterator it = hits.begin(); it != hits.end(); ++it) {
+			if (Device.dwTimeGlobal - it->m_level_time < 20000) {
+				in_active_combat = true;
+				break;
+			}
+		}
+	}
+
+	if (!in_active_combat) {
+		if (object().agent_manager().member().members().size() > 1) {
+			in_active_combat = true;
+		}
+	}
+
+	if (in_active_combat)
+		return;
+
+	if (time_since_seen != u32(-1) && time_since_seen < s_extended_wait_time)
 		return;
 
 	if (
 		object().agent_manager().member().can_detour() ||
 		!object().agent_manager().member().cover_detouring() ||
 		!fire_make_sense()
-	)
+		)
 		return;
 
 	m_storage->set_property(eWorldPropertyPositionHolded, true);

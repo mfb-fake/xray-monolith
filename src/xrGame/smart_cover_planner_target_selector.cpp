@@ -17,6 +17,8 @@
 #include "smart_cover_evaluators.h"
 #include "ai/stalker/ai_stalker.h"
 #include "smart_cover_default_behaviour_planner.hpp"
+#include "enemy_manager.h"
+#include "visual_memory_manager.h"
 
 using namespace StalkerDecisionSpace;
 using smart_cover::target_selector;
@@ -27,9 +29,22 @@ using smart_cover::default_behaviour_planner;
 void target_selector::setup(animation_planner* object, CPropertyStorage* storage)
 {
 	inherited::setup(object, storage);
-	//	inherited_planner::m_use_log = true;
-	//	inherited_action::m_use_log = true;
-	CActionPlanner::m_storage.set_property(eWorldPropertyLookedOut, m_random.randF() <= .7f ? true : false);
+
+	bool should_lookout = false;
+
+	CAI_Stalker* stalker = &this->object().object();
+
+	const CEntityAlive* enemy = stalker->memory().enemy().selected();
+	if (enemy && stalker->memory().visual().visible_now(enemy))
+	{
+		should_lookout = false;
+	}
+	else
+	{
+		should_lookout = true;
+	}
+
+	CActionPlanner::m_storage.set_property(eWorldPropertyLookedOut, should_lookout);
 	CActionPlanner::m_storage.set_property(eWorldPropertyLoopholeTooMuchTimeFiring, false);
 	add_evaluators();
 	add_actions();
@@ -130,6 +145,14 @@ void target_selector::add_evaluators()
 			false
 		)
 	);
+
+	add_evaluator(
+		eWorldPropertyLoopholeEnemyActual,
+		xr_new<evaluators::combat_enemy_evaluator>(
+			&object(),
+			"combat enemy actual"
+		)
+	);
 }
 
 void target_selector::add_actions()
@@ -151,6 +174,7 @@ void target_selector::add_actions()
 	add_condition(action, eWorldPropertyLoopholeUseDefaultBehaviour, false);
 	add_condition(action, eWorldPropertyLookedOut, false);
 	add_condition(action, eWorldPropertyLoopholeLastHitWasLongAgo, true);
+	add_condition(action, eWorldPropertyLoopholeEnemyActual, false);
 	add_condition(action, eWorldPropertyPlannerHasTarget, false);
 	add_effect(action, eWorldPropertyPlannerHasTarget, true);
 	add_operator(eWorldOperatorLoopholeTargetLookout, action);
@@ -161,6 +185,7 @@ void target_selector::add_actions()
 	add_condition(action, eWorldPropertyLookedOut, true);
 	add_condition(action, eWorldPropertyLoopholeLastHitWasLongAgo, true);
 	add_condition(action, eWorldPropertyLoopholeTooMuchTimeFiring, false);
+	add_condition(action, eWorldPropertyLoopholeEnemyActual, true);
 	add_condition(action, eWorldPropertyPlannerHasTarget, false);
 	add_effect(action, eWorldPropertyPlannerHasTarget, true);
 	add_operator(eWorldOperatorLoopholeTargetFire, action);

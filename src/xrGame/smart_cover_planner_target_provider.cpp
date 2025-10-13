@@ -13,6 +13,9 @@
 #include "agent_manager.h"
 #include "agent_enemy_manager.h"
 #include "weapon.h"
+#include "enemy_manager.h"
+#include "visual_memory_manager.h"
+#include "stalker_movement_manager_smart_cover.h"
 
 using smart_cover::animation_planner;
 using smart_cover::target_provider;
@@ -97,13 +100,63 @@ void target_fire::execute()
 	if (!completed())
 		return;
 
-	if (this->m_object->m_object->ready_to_kill())
+	CAI_Stalker* stalker = this->m_object->m_object;
+
+	typedef xr_vector<const CEntityAlive*> ENEMIES;
+	const ENEMIES& enemies = stalker->memory().enemy().objects();
+
+	bool has_visible_enemies = false;
+	bool has_recent_enemies = false;
+	u32 current_time = Device.dwTimeGlobal;
+
+	for (ENEMIES::const_iterator it = enemies.begin(); it != enemies.end(); ++it) {
+		const CEntityAlive* enemy = *it;
+		if (!enemy || !enemy->g_Alive())
+			continue;
+
+		bool visible_now = stalker->memory().visual().visible_now(enemy);
+		u32 last_seen = stalker->memory().visual().visible_object_time_last_seen(enemy);
+
+		bool is_visible = visible_now;
+		bool is_fresh = (last_seen != u32(-1) && (current_time - last_seen) < 2000);
+
+		if (!is_visible && !is_fresh)
+			continue;
+
+		if (!stalker->movement().in_current_loophole_fov(enemy->Position()))
+			continue;
+
+		if (is_visible) {
+			has_visible_enemies = true;
+			break;
+		}
+
+		if (is_fresh) {
+			has_recent_enemies = true;
+		}
+	}
+
+	if (has_visible_enemies) {
+		return;
+	}
+
+	if (has_recent_enemies) {
+		return;
+	}
+
+	if (stalker->ready_to_kill())
 	{
-		CWeapon* weapon = smart_cast<CWeapon*>(this->m_object->m_object->m_best_item_to_kill);
+		CWeapon* weapon = smart_cast<CWeapon*>(stalker->m_best_item_to_kill);
 		if (weapon)
 		{
-			if (weapon->GetAmmoElapsed() <= weapon->GetAmmoMagSize() / 6)
+			u32 mag_size = weapon->GetAmmoMagSize();
+			u32 ammo_remaining = weapon->GetAmmoElapsed();
+
+			if (ammo_remaining <= mag_size / 6)
+			{
+				m_storage->set_property(StalkerDecisionSpace::eWorldPropertyLoopholeTooMuchTimeFiring, true);
 				return;
+			}
 		}
 	}
 

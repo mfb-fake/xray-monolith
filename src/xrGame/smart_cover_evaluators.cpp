@@ -26,7 +26,7 @@
 #include "smart_cover_transition_animation.hpp"
 #include "smart_cover_description.h"
 #include "stalker_animation_manager.h"
-
+#include "hit_memory_manager.h"
 
 namespace smart_cover
 {
@@ -47,6 +47,7 @@ using smart_cover::evaluators::default_behaviour_evaluator;
 using smart_cover::evaluators::can_fire_at_enemy_evaluator;
 using smart_cover::evaluators::idle_time_interval_passed_evaluator;
 using smart_cover::evaluators::lookout_time_interval_passed_evaluator;
+using smart_cover::evaluators::combat_enemy_evaluator;
 using smart_cover::animation_planner;
 
 typedef CStalkerPropertyEvaluator::_value_type _value_type;
@@ -62,7 +63,18 @@ in_cover_evaluator::in_cover_evaluator(CAI_Stalker* object, LPCSTR evaluator_nam
 
 _value_type in_cover_evaluator::evaluate()
 {
-	return (!!object().movement().current_params().cover());
+	// FIXED: Once in smart cover, STAY in smart cover mode unless explicitly exited
+	// This prevents the combat planner from yanking us out prematurely
+
+	// Check if we're currently using a smart cover
+	if (object().movement().current_params().cover())
+		return (true);
+
+	// Check if we're in the process of entering a smart cover
+	if (object().movement().entering_smart_cover_with_animation())
+		return (true);
+
+	return (false);
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -264,13 +276,75 @@ can_fire_at_enemy_evaluator::can_fire_at_enemy_evaluator(animation_planner* obje
 
 _value_type can_fire_at_enemy_evaluator::evaluate()
 {
-	if (!m_object->m_object->movement().default_behaviour())
+	CAI_Stalker* stalker = m_object->m_object;
+
+	if (stalker->movement().current_params().cover_fire_position())
 		return (true);
 
-	if (m_object->m_object->movement().current_params().cover_fire_position())
+	if (stalker->movement().current_params().cover_fire_object())
 		return (true);
 
-	if (!m_object->m_object->movement().enemy_in_fov())
+	if (!stalker->movement().default_behaviour())
+		return (true);
+
+	typedef xr_vector<const CEntityAlive*> ENEMIES;
+	const ENEMIES& enemies = stalker->memory().enemy().objects();
+
+	u32 current_time = Device.dwTimeGlobal;
+	bool has_valid_target = false;
+	bool has_immediate_visible_threat = false;
+
+	for (ENEMIES::const_iterator it = enemies.begin(); it != enemies.end(); ++it) {
+		const CEntityAlive* enemy = *it;
+		if (!enemy || !enemy->g_Alive())
+			continue;
+
+		bool visible_now = stalker->memory().visual().visible_now(enemy);
+
+		if (!visible_now)
+			continue;
+
+		if (!stalker->movement().in_current_loophole_fov(enemy->Position()))
+			continue;
+
+		has_immediate_visible_threat = true;
+		has_valid_target = true;
+		break;
+	}
+
+	if (!has_immediate_visible_threat) {
+		for (ENEMIES::const_iterator it = enemies.begin(); it != enemies.end(); ++it) {
+			const CEntityAlive* enemy = *it;
+			if (!enemy || !enemy->g_Alive())
+				continue;
+
+			u32 last_seen_time = stalker->memory().visual().visible_object_time_last_seen(enemy);
+
+			bool position_is_fresh = (last_seen_time != u32(-1)) &&
+				((current_time - last_seen_time) < 5000);
+
+			if (!position_is_fresh)
+				continue;
+
+			if (!stalker->movement().in_current_loophole_fov(enemy->Position()))
+				continue;
+
+			has_valid_target = true;
+			break;
+		}
+	}
+
+	if (!has_valid_target)
+		return (false);
+
+	CWeapon* weapon = smart_cast<CWeapon*>(stalker->best_weapon());
+	if (!weapon)
+		return (false);
+
+	if (weapon->GetAmmoElapsed() == 0)
+		return (false);
+
+	if (weapon->GetState() == CWeapon::eReload)
 		return (false);
 
 	return (true);
@@ -293,16 +367,15 @@ _value_type idle_time_interval_passed_evaluator::evaluate()
 		return (false);
 
 	u32 const& current_time = Device.dwTimeGlobal;
-	if (current_time <= m_object->last_idle_time() + m_time_interval)
-	{
-		m_object->stay_idle(true);
+	u32 const& idle_start_time = m_object->last_idle_time();
 
+	if (current_time < idle_start_time + m_time_interval)
+	{
 		return (true);
 	}
 	else
 	{
 		m_object->last_lookout_time(current_time);
-		m_time_interval = m_object->default_idle_interval();
 		m_object->stay_idle(false);
 
 		return (false);
@@ -326,18 +399,193 @@ _value_type lookout_time_interval_passed_evaluator::evaluate()
 		return (false);
 
 	u32 const& current_time = Device.dwTimeGlobal;
-	if (current_time <= m_object->last_lookout_time() + m_time_interval)
-	{
-		m_object->stay_idle(false);
+	u32 const& lookout_start_time = m_object->last_lookout_time();
 
+	if (current_time < lookout_start_time + m_time_interval)
+	{
 		return (true);
 	}
 	else
 	{
 		m_object->last_idle_time(current_time);
-		m_time_interval = m_object->default_lookout_interval();
 		m_object->stay_idle(true);
 
 		return (false);
 	}
+}
+
+//////////////////////////////////////////////////////////////////////////
+// combat_enemy_evaluator
+//////////////////////////////////////////////////////////////////////////
+
+combat_enemy_evaluator::combat_enemy_evaluator(animation_planner* object, LPCSTR evaluator_name) :
+	inherited(object, evaluator_name)
+{
+}
+
+_value_type combat_enemy_evaluator::evaluate()
+{
+	CAI_Stalker* stalker = m_object->m_object;
+
+	const CEntityAlive* current_enemy = stalker->memory().enemy().selected();
+	if (!current_enemy)
+		return (false);
+
+	if (!current_enemy->g_Alive())
+		return (false);
+
+	bool current_enemy_visible = stalker->memory().visual().visible_now(current_enemy);
+	u32 current_enemy_last_seen = stalker->memory().visual().visible_object_time_last_seen(current_enemy);
+
+	if (!current_enemy_visible) {
+		if (current_enemy_last_seen == u32(-1))
+			return (false);
+
+		if ((Device.dwTimeGlobal - current_enemy_last_seen) > 5000)
+			return (false);
+	}
+
+	if (!stalker->movement().in_current_loophole_fov(current_enemy->Position()))
+		return (false);
+
+	bool current_enemy_firing = false;
+	const CAI_Stalker* current_stalker = smart_cast<const CAI_Stalker*>(current_enemy);
+	if (current_stalker && current_stalker->inventory().ActiveItem()) {
+		CWeapon* current_weapon = smart_cast<CWeapon*>(current_stalker->inventory().ActiveItem());
+		if (current_weapon) {
+			u32 weapon_state = current_weapon->GetState();
+			current_enemy_firing = (weapon_state == CWeapon::eFire || weapon_state == CWeapon::eFire2);
+		}
+	}
+
+	bool current_enemy_targeting_us = false;
+	u32 last_hit_time = stalker->memory().hit().last_hit_time();
+	if (last_hit_time != 0 && (Device.dwTimeGlobal - last_hit_time) < 3000) {
+		ALife::_OBJECT_ID hit_source = stalker->memory().hit().last_hit_object_id();
+		if (hit_source == current_enemy->ID()) {
+			current_enemy_targeting_us = true;
+		}
+	}
+
+	typedef xr_vector<const CEntityAlive*> ENEMIES;
+	const ENEMIES& enemies = stalker->memory().enemy().objects();
+
+	float current_distance = stalker->Position().distance_to(current_enemy->Position());
+	float current_threat_score = 0.0f;
+
+	if (current_enemy_visible)
+		current_threat_score += 100.0f;
+	else
+		current_threat_score += 30.0f;
+
+	if (current_enemy_firing)
+		current_threat_score += 120.0f;
+
+	if (current_enemy_targeting_us)
+		current_threat_score += 150.0f;
+
+	if (current_distance > 0.1f)
+		current_threat_score += (50.0f / current_distance);
+
+	if (current_enemy_last_seen != u32(-1)) {
+		u32 time_since_seen = Device.dwTimeGlobal - current_enemy_last_seen;
+		if (time_since_seen < 2000) {
+			float recency_factor = 1.0f - (time_since_seen / 2000.0f);
+			current_threat_score += 40.0f * recency_factor;
+		}
+	}
+
+	const CEntityAlive* better_enemy = nullptr;
+	float best_threat_score = current_threat_score;
+
+	bool in_combat_cover = stalker->movement().current_params().cover() != nullptr;
+
+	for (ENEMIES::const_iterator it = enemies.begin(); it != enemies.end(); ++it) {
+		const CEntityAlive* other_enemy = *it;
+
+		if (other_enemy == current_enemy || !other_enemy || !other_enemy->g_Alive())
+			continue;
+
+		bool other_visible = stalker->memory().visual().visible_now(other_enemy);
+
+		if (!other_visible) {
+			u32 other_last_seen = stalker->memory().visual().visible_object_time_last_seen(other_enemy);
+			if (other_last_seen == u32(-1))
+				continue;
+
+			if ((Device.dwTimeGlobal - other_last_seen) > 3000)
+				continue;
+		}
+
+		if (!stalker->movement().in_current_loophole_fov(other_enemy->Position()))
+			continue;
+
+		bool other_enemy_firing = false;
+		const CAI_Stalker* other_stalker = smart_cast<const CAI_Stalker*>(other_enemy);
+		if (other_stalker && other_stalker->inventory().ActiveItem()) {
+			CWeapon* other_weapon = smart_cast<CWeapon*>(other_stalker->inventory().ActiveItem());
+			if (other_weapon) {
+				u32 other_weapon_state = other_weapon->GetState();
+				other_enemy_firing = (other_weapon_state == CWeapon::eFire || other_weapon_state == CWeapon::eFire2);
+			}
+		}
+
+		bool other_enemy_targeting_us = false;
+		if (last_hit_time != 0 && (Device.dwTimeGlobal - last_hit_time) < 3000) {
+			ALife::_OBJECT_ID hit_source = stalker->memory().hit().last_hit_object_id();
+			if (hit_source == other_enemy->ID()) {
+				other_enemy_targeting_us = true;
+			}
+		}
+
+		float other_distance = stalker->Position().distance_to(other_enemy->Position());
+		float other_threat_score = 0.0f;
+
+		if (other_visible)
+			other_threat_score += 100.0f;
+		else
+			other_threat_score += 20.0f;
+
+		if (other_enemy_firing)
+			other_threat_score += 120.0f;
+
+		if (other_enemy_targeting_us)
+			other_threat_score += 150.0f;
+
+		if (other_distance > 0.1f)
+			other_threat_score += (50.0f / other_distance);
+
+		if (other_distance < current_distance * 0.6f)
+			other_threat_score += 80.0f;
+
+		u32 other_last_seen = stalker->memory().visual().visible_object_time_last_seen(other_enemy);
+		if (other_last_seen != u32(-1)) {
+			u32 time_since_other_seen = Device.dwTimeGlobal - other_last_seen;
+			if (time_since_other_seen < 2000) {
+				float recency_factor = 1.0f - (time_since_other_seen / 2000.0f);
+				other_threat_score += 40.0f * recency_factor;
+			}
+		}
+
+		if (other_threat_score > best_threat_score) {
+			best_threat_score = other_threat_score;
+			better_enemy = other_enemy;
+		}
+	}
+
+	float threat_multiplier = in_combat_cover ? 2.0f : 1.3f;
+
+	if (current_enemy_targeting_us) {
+		threat_multiplier = 1.5f;
+	}
+
+	if (in_combat_cover && current_enemy_visible && (current_enemy_firing || current_enemy_targeting_us)) {
+		threat_multiplier = 3.0f;
+	}
+
+	if (better_enemy && (best_threat_score > current_threat_score * threat_multiplier)) {
+		return (false);
+	}
+
+	return (true);
 }
